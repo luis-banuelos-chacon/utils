@@ -1,7 +1,11 @@
-from copy import deepcopy
+import json
 import math
-import time
 import sys
+
+
+SINGLE = 1
+DOUBLE = 2
+DASHED = 3
 
 
 class Painter(object):
@@ -12,7 +16,7 @@ class Painter(object):
 
         # SINGLES
         # straights
-        (0, 0, 1, 1): '─', (1, 1, 0, 0): '│',
+        (0, 0, 1, 1): '─', (1, 1, 0, 0): '│', (0, 0, 0, 0): '│',
         # corners
         (0, 1, 0, 1): '┌', (0, 1, 1, 0): '┐', (1, 0, 0, 1): '└', (1, 0, 1, 0): '┘',
         # intersections
@@ -30,11 +34,24 @@ class Painter(object):
         # ends
         (2, 0, 0, 0): '╨', (0, 2, 0, 0): '╥', (0, 0, 2, 0): '╡', (0, 0, 0, 2): '╞',
 
+        # DASHED (progress bar only)
+        # straights
+        (0, 0, 3, 3): '╌', (0, 0, 1, 3): '╌', (0, 0, 3, 1): '╌',
+        # transition
+        (1, 1, 0, 3): '├', (1, 1, 3, 0): '┤',
+        (2, 2, 0, 3): '╟', (2, 2, 3, 0): '╢',
+        # ends
+        (0, 0, 3, 0): '┤', (0, 0, 0, 3): '├',
+
+
         # INTERSECTION TRANSITION
         (0, 1, 0, 2): '╒', (0, 2, 0, 1): '╓', (0, 1, 2, 0): '╕', (0, 2, 1, 0): '╖', (1, 0, 0, 2): '╘',
-        (2, 0, 0, 1): '╙', (1, 0, 2, 0): '╛', (2, 0, 1, 0): '╜', (1, 1, 0, 2): '╞', (2, 2, 0, 1): '╟',
-        (1, 1, 2, 0): '╡', (2, 2, 1, 0): '╢', (0, 1, 2, 2): '╤', (0, 2, 1, 1): '╥', (1, 0, 2, 2): '╧',
-        (2, 0, 1, 1): '╨', (1, 1, 2, 2): '╪', (2, 2, 1, 1): '╫',
+        (2, 0, 0, 1): '╙', (1, 0, 2, 0): '╛', (2, 0, 1, 0): '╜',
+
+        (1, 1, 0, 2): '╞', (2, 2, 0, 1): '╟', (1, 1, 2, 0): '╡', (2, 2, 1, 0): '╢', (0, 1, 2, 2): '╤',
+        (0, 2, 1, 1): '╥', (1, 0, 2, 2): '╧', (2, 0, 1, 1): '╨',
+
+        (1, 1, 2, 2): '╪', (2, 2, 1, 1): '╫',
     }
 
     def __init__(self, width, height, stream=sys.stdout):
@@ -85,18 +102,29 @@ class Painter(object):
                 self._buffer[y][x] = None
 
     def set(self, x, y, v):
+        x, y = int(x), int(y)
         x0, y0, w, h = self._area
         if (0 <= x < w) and (0 <= y < h):
             self._buffer[y0 + y][x0 + x] = v
 
     def get(self, x, y):
+        x, y = int(x), int(y)
         x0, y0, w, h = self._area
         if (0 <= x < w) and (0 <= y < h):
             return self._buffer[y0 + y][x0 + x]
 
-    def drawText(self, x, y, text):
+    def drawText(self, x, y, text, anchor='<'):
+        # spacers
+        for c in text:
+            pass
+        if anchor == '>':
+            x = x - len(text)
+        if anchor == '^':
+            x = x - (len(text) / 2)
+
         for i, c in enumerate(text):
-            self.set(x+i, y, c)
+            if c != '\0':
+                self.set(x+i, y, c)
 
     def drawHorizontal(self, x, y, l, v):
         for ix in range(x + l):
@@ -128,7 +156,7 @@ class Painter(object):
 
     def boxify(self):
         x0, y0, w, h = self._area
-        out = deepcopy(self._buffer)
+        out = json.loads(json.dumps(self._buffer))  # faster than deepcopy
         for y in range(h):
             for x in range(w):
                 # if this is a marker
@@ -188,7 +216,7 @@ class Painter(object):
 
 class Item(object):
 
-    def __init__(self, border=None, margin=None):
+    def __init__(self, border=None, margin=None, min_width=None, min_height=None):
         '''Base drawable item
         Arguments:
             - border: symbol to draw borders
@@ -196,17 +224,38 @@ class Item(object):
         '''
         self.border = border
         self.margin = margin
+        # text in borders
+        self.tl = None
+        self.tc = None
+        self.tr = None
+        self.bl = None
+        self.bc = None
+        self.br = None
 
     def preRender(self, p):
         if self.border:
             p.drawRectangle(0, 0, p.width, p.height, self.border)
+            if self.tl:
+                p.drawText(2, 0, self.tl, '<')
+            if self.tc:
+                p.drawText(p.width/2, 0, self.tc, '^')
+            if self.tr:
+                p.drawText(p.width-2, 0, self.tr, '>')
+            if self.bl:
+                p.drawText(2, p.height-1, self.bl, '<')
+            if self.bc:
+                p.drawText(p.width/2, p.height-1, self.bc, '^')
+            if self.br:
+                p.drawText(p.width-2, p.height-1, self.br, '>')
             p.pushArea(1, 1, p.width-2, p.height-2)
+
         if self.margin:
             p.pushArea(self.margin, self.margin, p.width-(self.margin*2), p.height-(self.margin*2))
 
     def postRender(self, p):
         if self.margin:
             p.popArea()
+
         if self.border:
             p.popArea()
             p.boxify()
@@ -218,7 +267,7 @@ class Item(object):
 
 class Formatter(Item):
 
-    def __init__(self, data, ha='<', va='', pad='', prec=3, *args, **kwargs):
+    def __init__(self, data=None, ha='<', va='', pad='', prec=3, *args, **kwargs):
         '''Text formatting
         Arguments:
             - ha: horizontal alignemnt (<, ^, >)
@@ -232,6 +281,7 @@ class Formatter(Item):
         self.va = va
 
     def render(self, p):
+        self.preRender(p)
         # vertical alignment
         if self.va == '-':
             y = int(p.height / 2)
@@ -243,11 +293,20 @@ class Formatter(Item):
         if isinstance(self.data, str):
             if len(self.data) > p.width:
                 chunks = [self.data[i:i+p.width] for i in range(0, len(self.data), p.width)]
+                if self.va == '_':
+                    y -= len(chunks) - 1
                 for chunk in chunks:
                     p.drawText(0, y, '{:{pad}{align}{width}}'.format(chunk, pad=self.pad, align=self.ha, width=p.width))
                     y += 1
             else:
                 p.drawText(0, y, '{:{pad}{align}{width}}'.format(self.data, pad=self.pad, align=self.ha, width=p.width))
+
+        elif isinstance(self.data, list):
+            if self.va == '_':
+                y -= len(self.data) - 1
+            for item in self.data:
+                p.drawText(0, y, '{:{pad}{align}{width}}'.format(item, pad=self.pad, align=self.ha, width=p.width))
+                y += 1
 
         elif isinstance(self.data, int):
             p.drawText(0, y, '{:{pad}{align}{width}}'.format(self.data, pad=self.pad, align=self.ha, width=p.width))
@@ -256,6 +315,27 @@ class Formatter(Item):
             if self.prec is None:
                 self.prec = p.width
             p.drawText(0, y, '{:{pad}{align}{width}.{prec}f}'.format(self.data, pad=self.pad, align=self.ha, width=p.width, prec=self.prec))
+
+        self.postRender(p)
+
+
+class ProgressBar(Item):
+
+    def __init__(self, progress=0.0, total=1.0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.progress = progress
+        self.total = total
+
+    def render(self, p):
+        self.preRender(p)
+        prog_x = int(p.width * (self.progress / self.total))
+        for x in range(p.width):
+            if x > prog_x:
+                p.set(x, 0, DASHED)
+            else:
+                p.set(x, 0, SINGLE)
+        p.boxify()
+        self.postRender(p)
 
 
 class Layout(Item):
@@ -322,7 +402,7 @@ class Layout(Item):
         # count dividers
         dividers = (len(self.items) - 1) * (self.divider is not None)
         # total fixed length
-        fixed_length = sum([w for w, i in self.items if w > 1.0])
+        fixed_length = sum([math.floor(w) for w, i in self.items if w > 1.0])
         # total weight
         total_weight = sum([w for w, i in self.items if w <= 1.0])
         # total distributable length is drawable area - dividers - fixed length
@@ -341,17 +421,65 @@ class Layout(Item):
         return lengths
 
 
-if __name__ == '__main__':
-    p = Painter(60, 21)
-    # Layout(direction, border, divider)
-    panel0 = Layout('v', border=2, divider=1)
-    panel1 = Layout('h', border=0, divider=1)
-    panel2 = Layout('v', border=2, divider=2, margin=2)
-    panel0.addItem(Formatter('pajas', '^', '-'))
-    panel0.addItem(panel1)
-    panel1.addItem(Formatter('is', '^', '-'))
-    panel1.addItem(panel2)
-    panel2.addItem(Formatter('the', '^', '-'))
-    panel2.addItem(Formatter('stuff', '^', '-'))
-    panel0.render(p)
-    p.print(False)
+class Table(Layout):
+
+    def __init__(self, headers=[], data=[[]], weights=None, ha=None, da=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.headers = headers
+        self.weights = weights
+        self.data = data
+        self.ha = ha            # header alignment
+        self.da = da            # data alignment
+
+    def render(self, p):
+        # reset items
+        self.items = []
+
+        # headers
+        header = Layout(direction='h', divider=None, border=None, margin=None)
+        for i, data in enumerate(self.headers):
+            #
+            if self.ha:
+                if isinstance(self.ha, str):
+                    item = self.asItem(data, self.ha)
+                elif isinstance(self.ha, list) or isinstance(self.ha, tuple):
+                    item = self.asItem(data, self.ha[i])
+            else:
+                item = self.asItem(data)
+
+            if self.weights:
+                header.addItem(item, self.weights[i])
+            else:
+                header.addItem(item)
+
+        self.addItem(header, 1.1)
+
+        # data
+        rows = Layout(direction='v', divider=None, border=None, margin=None)
+        for data_row in self.data:
+            row = Layout(direction='h', divider=None, border=None, margin=None)
+            for i, data in enumerate(data_row):
+                if self.da:
+                    if isinstance(self.da, str):
+                        item = self.asItem(data, self.da)
+                    elif isinstance(self.da, list) or isinstance(self.da, tuple):
+                        item = self.asItem(data, self.da[i])
+                else:
+                    item = self.asItem(data)
+
+                if self.weights:
+                    row.addItem(item, self.weights[i])
+                else:
+                    row.addItem(item)
+
+            rows.addItem(row, 1.1)
+        self.addItem(rows)
+
+        super().render(p)
+
+    def asItem(self, data, ha='<'):
+        '''Returns item and weight.'''
+        if issubclass(data.__class__, Item):
+            return data
+        else:
+            return Formatter(data, ha)
