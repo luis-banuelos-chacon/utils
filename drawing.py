@@ -86,7 +86,8 @@ class Painter(object):
 
     def set(self, x, y, v):
         x0, y0, w, h = self._area
-        self._buffer[y0 + y][x0 + x] = v
+        if (0 <= x < w) and (0 <= y < h):
+            self._buffer[y0 + y][x0 + x] = v
 
     def get(self, x, y):
         x0, y0, w, h = self._area
@@ -187,38 +188,106 @@ class Painter(object):
 
 class Item(object):
 
+    def __init__(self, border=None, margin=None):
+        '''Base drawable item
+        Arguments:
+            - border: symbol to draw borders
+            - margin: margin size
+        '''
+        self.border = border
+        self.margin = margin
+
+    def preRender(self, p):
+        if self.border:
+            p.drawRectangle(0, 0, p.width, p.height, self.border)
+            p.pushArea(1, 1, p.width-2, p.height-2)
+        if self.margin:
+            p.pushArea(self.margin, self.margin, p.width-(self.margin*2), p.height-(self.margin*2))
+
+    def postRender(self, p):
+        if self.margin:
+            p.popArea()
+        if self.border:
+            p.popArea()
+            p.boxify()
+
     def render(self, p):
-        p.drawRectangle(0, 0, p.width, p.height, ' ')
+        self.preRender(p)
+        self.postRender(p)
 
 
-class Layout(object):
+class Formatter(Item):
 
-    def __init__(self, direction='v', border='2', divider='1'):
-        self._direction = direction     # layout direction
-        self._divider = divider         # divider marker
-        self._border = border           # border marker
-        self._items = []                # item list
+    def __init__(self, data, ha='<', va='', pad='', prec=3, *args, **kwargs):
+        '''Text formatting
+        Arguments:
+            - ha: horizontal alignemnt (<, ^, >)
+            - va: vertical alignment (_, -, ^)
+        '''
+        super().__init__(*args, **kwargs)
+        self.data = data
+        self.prec = prec
+        self.pad = pad
+        self.ha = ha
+        self.va = va
+
+    def render(self, p):
+        # vertical alignment
+        if self.va == '-':
+            y = int(p.height / 2)
+        elif self.va == '_':
+            y = p.height - 1
+        else:
+            y = 0
+
+        if isinstance(self.data, str):
+            if len(self.data) > p.width:
+                chunks = [self.data[i:i+p.width] for i in range(0, len(self.data), p.width)]
+                for chunk in chunks:
+                    p.drawText(0, y, '{:{pad}{align}{width}}'.format(chunk, pad=self.pad, align=self.ha, width=p.width))
+                    y += 1
+            else:
+                p.drawText(0, y, '{:{pad}{align}{width}}'.format(self.data, pad=self.pad, align=self.ha, width=p.width))
+
+        elif isinstance(self.data, int):
+            p.drawText(0, y, '{:{pad}{align}{width}}'.format(self.data, pad=self.pad, align=self.ha, width=p.width))
+
+        elif isinstance(self.data, float):
+            if self.prec is None:
+                self.prec = p.width
+            p.drawText(0, y, '{:{pad}{align}{width}.{prec}f}'.format(self.data, pad=self.pad, align=self.ha, width=p.width, prec=self.prec))
+
+
+class Layout(Item):
+
+    def __init__(self, direction='v', divider=1, border=1, *args, **kwargs):
+        '''Layout multiple items
+        Arguments:
+            - direction: which direction to layout items
+            - divider: symbol to draw dividers
+        '''
+        super().__init__(border=border, *args, **kwargs)
+        self.direction = direction      # layout direction
+        self.divider = divider          # divider marker
+        self.items = []                 # item list
 
     def addItem(self, item, weight=1):
-        self._items.append((weight, item))
+        self.items.append((weight, item))
 
     def render(self, p):
-        # draw border and reduce area
-        if self._border:
-            p.drawRectangle(0, 0, p.width, p.height, self._border)
-            p.pushArea(1, 1, p.width-2, p.height-2)
+        self.preRender(p)
 
-        if self._direction == 'v':
+        if self.direction == 'v':
             # get distribution
             dist = self._lengthDistribution(p.height)
 
             # draw dividers and items
             y = 0
-            for i, pair in enumerate(self._items):
+            for i, pair in enumerate(self.items):
                 w, item = pair
 
-                if (i > 0) and self._divider:
-                    p.drawHorizontal(0, y, p.width, self._divider)
+                if (i > 0) and self.divider:
+                    p.drawHorizontal(0, y, p.width, self.divider)
                     y += 1
 
                 p.pushArea(0, y, p.width, dist[i])
@@ -233,11 +302,11 @@ class Layout(object):
 
             # draw dividers and items
             x = 0
-            for i, pair in enumerate(self._items):
+            for i, pair in enumerate(self.items):
                 w, item = pair
 
-                if (i > 0) and self._divider:
-                    p.drawVertical(x, 0, p.height, self._divider)
+                if (i > 0) and self.divider:
+                    p.drawVertical(x, 0, p.height, self.divider)
                     x += 1
 
                 p.pushArea(x, 0, dist[i], p.height)
@@ -246,24 +315,21 @@ class Layout(object):
 
                 x += dist[i]
 
-        # pop to border and boxify
-        if self._border:
-            p.popArea()
-            p.boxify()
+        self.postRender(p)
 
     def _lengthDistribution(self, length):
         '''Distributes length across items.'''
         # count dividers
-        dividers = (len(self._items) - 1) * (self._divider is not None)
+        dividers = (len(self.items) - 1) * (self.divider is not None)
         # total fixed length
-        fixed_length = sum([w for w, i in self._items if w > 1.0])
+        fixed_length = sum([w for w, i in self.items if w > 1.0])
         # total weight
-        total_weight = sum([w for w, i in self._items if w <= 1.0])
+        total_weight = sum([w for w, i in self.items if w <= 1.0])
         # total distributable length is drawable area - dividers - fixed length
         total_length = length - dividers - fixed_length
         # generate length list
         lengths = []
-        for weight, item in self._items:
+        for weight, item in self.items:
             if weight > 1.0:
                 lengths.append(int(weight))
             else:
@@ -278,14 +344,14 @@ class Layout(object):
 if __name__ == '__main__':
     p = Painter(60, 21)
     # Layout(direction, border, divider)
-    panel0 = Layout('v', 2, 1)
-    panel1 = Layout('h', 0, 1)
-    panel2 = Layout('v', 2, 1)
-    panel0.addItem(Item())
+    panel0 = Layout('v', border=2, divider=1)
+    panel1 = Layout('h', border=0, divider=1)
+    panel2 = Layout('v', border=2, divider=2, margin=2)
+    panel0.addItem(Formatter('pajas', '^', '-'))
     panel0.addItem(panel1)
-    panel1.addItem(Item())
+    panel1.addItem(Formatter('is', '^', '-'))
     panel1.addItem(panel2)
-    panel2.addItem(Item())
-    panel2.addItem(Item())
+    panel2.addItem(Formatter('the', '^', '-'))
+    panel2.addItem(Formatter('stuff', '^', '-'))
     panel0.render(p)
     p.print(False)
